@@ -1,3 +1,4 @@
+import { Analytics } from '@vercel/analytics/react'
 import { useCallback, useEffect, useState } from 'react'
 import { apiClient, getPublicIngestUrl } from './api/client'
 import { EventFeed } from './components/EventFeed'
@@ -373,6 +374,7 @@ export function App() {
           </div>
         )}
       </main>
+      <Analytics />
     </div>
   )
 }
