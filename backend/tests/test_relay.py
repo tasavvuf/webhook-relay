@@ -377,3 +377,22 @@ async def test_timeout_failure_recording(test_env):
     assert detail["attempts"] == 3
     assert detail["response_status"] is None
     assert "timed out" in detail["error_message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_demo_sink_modes(test_env):
+    client, _ = test_env
+
+    ok_res = await client.post(
+        "/api/demo/sink?mode=ok",
+        content=b'{"demo":true}',
+        headers={"X-Relay-Event-ID": "evt-123"},
+    )
+    assert ok_res.status_code == 200
+    assert ok_res.json()["ok"] is True
+    assert ok_res.json()["relay_event_id"] == "evt-123"
+
+    fail_res = await client.post("/api/demo/sink?mode=fail", content=b'{"demo":false}')
+    assert fail_res.status_code == 500
+    assert fail_res.json()["ok"] is False
+

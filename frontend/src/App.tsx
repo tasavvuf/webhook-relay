@@ -1,6 +1,6 @@
 import { Analytics } from '@vercel/analytics/react'
 import { useCallback, useEffect, useState } from 'react'
-import { apiClient, getPublicIngestUrl } from './api/client'
+import { apiClient, getDemoSinkUrl, getPublicIngestUrl } from './api/client'
 import { EventFeed } from './components/EventFeed'
 import { EventInspector } from './components/EventInspector'
 import { Sidebar } from './components/Sidebar'
@@ -25,6 +25,8 @@ export function App() {
   const [replaying, setReplaying] = useState(false)
 
   const [isTestSenderOpen, setIsTestSenderOpen] = useState(false)
+  const [runningDemo, setRunningDemo] = useState(false)
+  const [demoNotice, setDemoNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string>('')
   const [showSecret, setShowSecret] = useState(false)
@@ -213,6 +215,65 @@ export function App() {
     setStatusMessage(`Deleted endpoint ${endpoint.name}.`)
   }
 
+  const handleLoadDemo = async () => {
+    setRunningDemo(true)
+    setError(null)
+    try {
+      const okEndpoint = await apiClient.createEndpoint({
+        name: 'Stripe Demo (200 OK)',
+        target_url: getDemoSinkUrl('ok'),
+        use_secret: true,
+      })
+      const failEndpoint = await apiClient.createEndpoint({
+        name: 'Flaky Target (500 Retry)',
+        target_url: getDemoSinkUrl('fail'),
+        use_secret: true,
+      })
+
+      const okPayload = JSON.stringify(
+        { event: 'invoice.paid', customer: 'cus_demo_01', amount: 4900, currency: 'usd' },
+        null,
+        2,
+      )
+      const failPayload = JSON.stringify(
+        { event: 'charge.failed', customer: 'cus_demo_02', amount: 12900, reason: 'downstream_500' },
+        null,
+        2,
+      )
+      const okKey = `evt_demo_ok_${Date.now()}`
+      const failKey = `evt_demo_fail_${Date.now()}`
+
+      const firstRes = await apiClient.sendTestWebhook(okEndpoint.slug, {
+        payload: okPayload,
+        idempotencyKey: okKey,
+        signingSecret: okEndpoint.signing_secret,
+      })
+      const dupRes = await apiClient.sendTestWebhook(okEndpoint.slug, {
+        payload: okPayload,
+        idempotencyKey: okKey,
+        signingSecret: okEndpoint.signing_secret,
+      })
+      await apiClient.sendTestWebhook(failEndpoint.slug, {
+        payload: failPayload,
+        idempotencyKey: failKey,
+        signingSecret: failEndpoint.signing_secret,
+      })
+
+      setSelectedEndpointId(okEndpoint.id)
+      const firstEventId = 'event_id' in firstRes.data ? firstRes.data.event_id : null
+      await fetchEndpointData(okEndpoint.id, firstEventId)
+      const dupStatus = 'status' in dupRes.data ? dupRes.data.status : 'ignored'
+      setDemoNotice(
+        `Demo active: sent signed event (202) + duplicate (${dupRes.httpStatus} ${dupStatus}). Switch to "Flaky Target (500 Retry)" in the sidebar to watch Retrying -> Failed -> Replay.`,
+      )
+      setStatusMessage('Interactive demo endpoints created and seeded.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to run live demo')
+    } finally {
+      setRunningDemo(false)
+    }
+  }
+
   const copyToClipboard = async (value: string, field: 'url' | 'secret') => {
     try {
       await navigator.clipboard.writeText(value)
@@ -238,12 +299,29 @@ export function App() {
         endpoints={endpoints}
         selectedId={selectedEndpoint?.id ?? null}
         loading={loadingEndpoints}
+        runningDemo={runningDemo}
         onSelect={handleSelectEndpoint}
         onCreate={handleCreateEndpoint}
         onDelete={handleDeleteEndpoint}
+        onLoadDemo={handleLoadDemo}
       />
 
       <main className="flex-1 min-w-0 flex flex-col h-full">
+        {demoNotice && (
+          <div
+            role="status"
+            className="px-4 py-2 bg-emerald-950/40 border-b border-emerald-800/60 text-xs text-emerald-300 font-mono flex items-center justify-between gap-3"
+          >
+            <span>{demoNotice}</span>
+            <button
+              type="button"
+              onClick={() => setDemoNotice(null)}
+              className="text-emerald-200 hover:text-white underline shrink-0 cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {error && (
           <div
             role="alert"
@@ -368,9 +446,17 @@ export function App() {
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
             <h1 className="text-sm font-medium text-zinc-200">No webhook endpoint selected</h1>
             <p className="text-xs text-zinc-500 mt-1.5 max-w-sm">
-              Create an endpoint from the sidebar to receive a unique ingestion URL and inspect
-              deliveries.
+              Create an endpoint from the sidebar or load the live demo to test HMAC signing,
+              idempotency deduplication, retries, and manual replay.
             </p>
+            <button
+              type="button"
+              disabled={runningDemo}
+              onClick={() => void handleLoadDemo()}
+              className="mt-4 min-h-[36px] px-4 py-1.5 rounded-md bg-zinc-50 text-zinc-950 hover:bg-zinc-200 text-xs font-medium disabled:opacity-50 cursor-pointer"
+            >
+              {runningDemo ? 'Running Demo...' : 'Load Live Demo'}
+            </button>
           </div>
         )}
       </main>

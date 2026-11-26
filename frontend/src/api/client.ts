@@ -8,17 +8,24 @@ import type {
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 
-export function getPublicIngestUrl(slug: string): string {
+export function getBackendOrigin(): string {
   if (API_BASE) {
-    return `${API_BASE}/api/ingest/${slug}`
+    return API_BASE
   }
-  const origin =
-    typeof window !== 'undefined'
-      ? window.location.port === '5173'
-        ? `${window.location.protocol}//${window.location.hostname}:8000`
-        : window.location.origin
-      : 'http://localhost:8000'
-  return `${origin}/api/ingest/${slug}`
+  if (typeof window !== 'undefined') {
+    return window.location.port === '5173'
+      ? `${window.location.protocol}//${window.location.hostname}:8000`
+      : window.location.origin
+  }
+  return 'http://localhost:8000'
+}
+
+export function getPublicIngestUrl(slug: string): string {
+  return `${getBackendOrigin()}/api/ingest/${slug}`
+}
+
+export function getDemoSinkUrl(mode: 'ok' | 'fail'): string {
+  return `${getBackendOrigin()}/api/demo/sink?mode=${mode}`
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {

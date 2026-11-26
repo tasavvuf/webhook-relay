@@ -7,7 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import settings
 from app.database import get_session, init_db
-from app.routes import endpoints, events, ingest
+from app.routes import demo, endpoints, events, ingest
 
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ app.add_middleware(
 app.include_router(endpoints.router)
 app.include_router(ingest.router)
 app.include_router(events.router)
+app.include_router(demo.router)
 
 
 @app.get("/health")

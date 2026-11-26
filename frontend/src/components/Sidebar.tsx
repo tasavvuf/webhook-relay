@@ -5,9 +5,11 @@ interface SidebarProps {
   endpoints: Endpoint[]
   selectedId: string | null
   loading: boolean
+  runningDemo: boolean
   onSelect: (endpoint: Endpoint) => void
   onCreate: (data: EndpointCreate) => Promise<void>
   onDelete: (endpoint: Endpoint) => Promise<void>
+  onLoadDemo: () => Promise<void>
 }
 
 function isValidHttpUrl(value: string): boolean {
@@ -23,9 +25,11 @@ export function Sidebar({
   endpoints,
   selectedId,
   loading,
+  runningDemo,
   onSelect,
   onCreate,
   onDelete,
+  onLoadDemo,
 }: SidebarProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -177,7 +181,7 @@ export function Sidebar({
         </span>
       </div>
 
-      <div className="p-3 border-b border-[#27272A]">
+      <div className="p-3 border-b border-[#27272A] space-y-2">
         <button
           type="button"
           onClick={openModal}
@@ -194,6 +198,15 @@ export function Sidebar({
             <path d="M8 3v10M3 8h10" strokeLinecap="round" />
           </svg>
           New Endpoint
+        </button>
+
+        <button
+          type="button"
+          disabled={runningDemo}
+          onClick={() => void onLoadDemo()}
+          className="w-full min-h-[32px] px-3 py-1 rounded-md border border-[#27272A] bg-[#09090B] hover:bg-zinc-800 text-xs font-medium text-zinc-300 disabled:opacity-50 cursor-pointer"
+        >
+          {runningDemo ? 'Running Demo...' : 'Load Live Demo'}
         </button>
       </div>
 
