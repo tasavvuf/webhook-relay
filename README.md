@@ -92,3 +92,10 @@ Re-sending the exact same `X-Idempotency-Key` returns `200 OK` with `{"event_id"
 ```bash
 curl -s -X POST "http://localhost:8000/api/events/<event_id>/replay"
 ```
+
+## Production Deployment (Neon + Render + Vercel)
+
+- **Database (Neon Lakebase Postgres)**: Configured via `neon.ts` (branch `production`). `backend/app/config.py` reads `.env` / `.env.local` (or runtime env vars), normalizes Postgres URLs to `postgresql+asyncpg://` with TLS (`ssl="require"`), disables prepared statement caching on pooled `-pooler` hosts (`statement_cache_size=0`), and runs table creation (`init_db`) against `DATABASE_URL_UNPOOLED` when provided.
+- **Backend (Render)**: Deploy using [render.yaml](render.yaml) (`rootDir: backend`, Python `3.12.15`, `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, health check `/health`). Set `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, and `CORS_ORIGINS` in Render.
+- **Frontend (Vercel)**: Deploy with Vercel Root Directory set to `frontend` ([frontend/vercel.json](frontend/vercel.json)) and set `VITE_API_BASE_URL` to your Render backend URL.
+

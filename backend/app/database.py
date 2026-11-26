@@ -5,19 +5,25 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.config import settings
+from app.config import normalize_async_database_url, settings
 
 
 def _make_engine(database_url: str):
-    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-    async_engine = create_async_engine(
-        database_url,
-        echo=False,
-        future=True,
-        connect_args=connect_args,
-    )
+    normalized_url, connect_args = normalize_async_database_url(database_url)
+    is_sqlite = normalized_url.startswith("sqlite")
 
-    if database_url.startswith("sqlite"):
+    engine_kwargs: dict = {
+        "echo": False,
+        "future": True,
+        "connect_args": connect_args,
+    }
+    if not is_sqlite:
+        engine_kwargs["pool_pre_ping"] = True
+        engine_kwargs["pool_recycle"] = 300
+
+    async_engine = create_async_engine(normalized_url, **engine_kwargs)
+
+    if is_sqlite:
         @event.listens_for(async_engine.sync_engine, "connect")
         def _enable_sqlite_fks(dbapi_connection, _connection_record):
             cursor = dbapi_connection.cursor()
@@ -27,7 +33,7 @@ def _make_engine(database_url: str):
     return async_engine
 
 
-engine = _make_engine(settings.async_database_url)
+engine = _make_engine(settings.DATABASE_URL)
 async_session_maker = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -36,8 +42,17 @@ async_session_maker = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """Create database tables if they do not exist."""
+    """Create database tables using the direct (unpooled) connection when available."""
     import app.models  # noqa: F401
+
+    if settings.DATABASE_URL_UNPOOLED:
+        ddl_engine = _make_engine(settings.DATABASE_URL_UNPOOLED)
+        try:
+            async with ddl_engine.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.create_all)
+        finally:
+            await ddl_engine.dispose()
+        return
 
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
