@@ -3,6 +3,7 @@ import { apiClient, getPublicIngestUrl } from './api/client'
 import { EventFeed } from './components/EventFeed'
 import { EventInspector } from './components/EventInspector'
 import { Sidebar } from './components/Sidebar'
+import { TestSender } from './components/TestSender'
 import type {
   Endpoint,
   EndpointCreate,
@@ -22,6 +23,7 @@ export function App() {
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [replaying, setReplaying] = useState(false)
 
+  const [isTestSenderOpen, setIsTestSenderOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string>('')
   const [showSecret, setShowSecret] = useState(false)
@@ -101,16 +103,12 @@ export function App() {
 
   // Initial load when switching endpoints
   useEffect(() => {
-    if (!selectedEndpoint?.id) {
-      setEvents([])
-      setSelectedEventId(null)
-      setSelectedEventDetail(null)
-      return
-    }
+    if (!selectedEndpoint?.id) return
+
     let active = true
-    setLoadingEvents(true)
+    const endpointId = selectedEndpoint.id
     apiClient
-      .listEndpointEvents(selectedEndpoint.id)
+      .listEndpointEvents(endpointId)
       .then(async (list) => {
         if (!active) return
         setEvents(list)
@@ -147,6 +145,15 @@ export function App() {
     return () => window.clearInterval(timer)
   }, [selectedEndpoint?.id, selectedEventId, isTabVisible, fetchEndpointData])
 
+  const handleSelectEndpoint = (ep: Endpoint) => {
+    setSelectedEndpointId(ep.id)
+    setShowSecret(false)
+    setLoadingEvents(true)
+    setEvents([])
+    setSelectedEventId(null)
+    setSelectedEventDetail(null)
+  }
+
   const handleSelectEvent = async (eventId: string) => {
     setSelectedEventId(eventId)
     setLoadingDetail(true)
@@ -181,6 +188,9 @@ export function App() {
     setEndpoints((prev) => [created, ...prev])
     setSelectedEndpointId(created.id)
     setShowSecret(false)
+    setEvents([])
+    setSelectedEventId(null)
+    setSelectedEventDetail(null)
     setStatusMessage(`Endpoint ${created.name} created.`)
   }
 
@@ -189,7 +199,13 @@ export function App() {
     setEndpoints((prev) => {
       const remaining = prev.filter((item) => item.id !== endpoint.id)
       if (selectedEndpointId === endpoint.id) {
-        setSelectedEndpointId(remaining[0]?.id ?? null)
+        const nextId = remaining[0]?.id ?? null
+        setSelectedEndpointId(nextId)
+        if (!nextId) {
+          setEvents([])
+          setSelectedEventId(null)
+          setSelectedEventDetail(null)
+        }
       }
       return remaining
     })
@@ -221,10 +237,7 @@ export function App() {
         endpoints={endpoints}
         selectedId={selectedEndpoint?.id ?? null}
         loading={loadingEndpoints}
-        onSelect={(ep) => {
-          setSelectedEndpointId(ep.id)
-          setShowSecret(false)
-        }}
+        onSelect={handleSelectEndpoint}
         onCreate={handleCreateEndpoint}
         onDelete={handleDeleteEndpoint}
       />
@@ -263,6 +276,15 @@ export function App() {
                     Target: {selectedEndpoint.target_url}
                   </p>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsTestSenderOpen((prev) => !prev)}
+                  aria-expanded={isTestSenderOpen}
+                  className="min-h-[34px] px-3.5 py-1.5 rounded-md border border-[#27272A] bg-[#09090B] hover:bg-zinc-800 text-xs font-medium text-zinc-100 shrink-0 cursor-pointer"
+                >
+                  {isTestSenderOpen ? 'Hide Test Sender' : 'Send Test Event'}
+                </button>
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5">
@@ -313,6 +335,16 @@ export function App() {
                 )}
               </div>
             </header>
+
+            <TestSender
+              key={selectedEndpoint.id}
+              endpoint={selectedEndpoint}
+              isOpen={isTestSenderOpen}
+              onClose={() => setIsTestSenderOpen(false)}
+              onEventSent={async (eventId) => {
+                await fetchEndpointData(selectedEndpoint.id, eventId)
+              }}
+            />
 
             <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2">
               <EventFeed
