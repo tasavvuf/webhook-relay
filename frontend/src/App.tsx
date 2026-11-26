@@ -1,44 +1,187 @@
 import { useCallback, useEffect, useState } from 'react'
 import { apiClient, getPublicIngestUrl } from './api/client'
+import { EventFeed } from './components/EventFeed'
+import { EventInspector } from './components/EventInspector'
 import { Sidebar } from './components/Sidebar'
-import type { Endpoint, EndpointCreate } from './types'
+import type {
+  Endpoint,
+  EndpointCreate,
+  WebhookEventDetail,
+  WebhookEventSummary,
+} from './types'
 
 export function App() {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null)
   const [loadingEndpoints, setLoadingEndpoints] = useState(true)
+
+  const [events, setEvents] = useState<WebhookEventSummary[]>([])
+  const [loadingEvents, setLoadingEvents] = useState(false)
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
+  const [selectedEventDetail, setSelectedEventDetail] = useState<WebhookEventDetail | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [replaying, setReplaying] = useState(false)
+
   const [error, setError] = useState<string | null>(null)
+  const [statusMessage, setStatusMessage] = useState<string>('')
   const [showSecret, setShowSecret] = useState(false)
   const [copiedField, setCopiedField] = useState<'url' | 'secret' | null>(null)
+  const [isTabVisible, setIsTabVisible] = useState(
+    typeof document !== 'undefined' ? document.visibilityState === 'visible' : true,
+  )
 
   const selectedEndpoint =
     endpoints.find((ep) => ep.id === selectedEndpointId) ?? endpoints[0] ?? null
 
-  const refreshEndpoints = useCallback(async () => {
-    try {
-      const list = await apiClient.listEndpoints()
-      setEndpoints(list)
-      setSelectedEndpointId((prev) => {
-        if (prev && list.some((e) => e.id === prev)) return prev
-        return list[0]?.id ?? null
-      })
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load endpoints')
-    } finally {
-      setLoadingEndpoints(false)
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      setIsTabVisible(document.visibilityState === 'visible')
     }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [])
 
   useEffect(() => {
-    void refreshEndpoints()
-  }, [refreshEndpoints])
+    let active = true
+    apiClient
+      .listEndpoints()
+      .then((list) => {
+        if (!active) return
+        setEndpoints(list)
+        setSelectedEndpointId((prev) => {
+          if (prev && list.some((e) => e.id === prev)) return prev
+          return list[0]?.id ?? null
+        })
+        setError(null)
+      })
+      .catch((err: unknown) => {
+        if (!active) return
+        setError(err instanceof Error ? err.message : 'Failed to load endpoints')
+      })
+      .finally(() => {
+        if (active) setLoadingEndpoints(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const fetchEndpointData = useCallback(
+    async (endpointId: string, activeEventId: string | null) => {
+      try {
+        const [eventList, endpointList] = await Promise.all([
+          apiClient.listEndpointEvents(endpointId),
+          apiClient.listEndpoints(),
+        ])
+        setEvents(eventList)
+        setEndpoints(endpointList)
+
+        const targetEventId =
+          activeEventId && eventList.some((e) => e.id === activeEventId)
+            ? activeEventId
+            : (eventList[0]?.id ?? null)
+
+        setSelectedEventId(targetEventId)
+        if (targetEventId) {
+          const detail = await apiClient.getEventDetail(targetEventId)
+          setSelectedEventDetail(detail)
+        } else {
+          setSelectedEventDetail(null)
+        }
+        setError(null)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch events')
+      } finally {
+        setLoadingEvents(false)
+      }
+    },
+    [],
+  )
+
+  // Initial load when switching endpoints
+  useEffect(() => {
+    if (!selectedEndpoint?.id) {
+      setEvents([])
+      setSelectedEventId(null)
+      setSelectedEventDetail(null)
+      return
+    }
+    let active = true
+    setLoadingEvents(true)
+    apiClient
+      .listEndpointEvents(selectedEndpoint.id)
+      .then(async (list) => {
+        if (!active) return
+        setEvents(list)
+        const nextEventId = list[0]?.id ?? null
+        setSelectedEventId(nextEventId)
+        if (nextEventId) {
+          const detail = await apiClient.getEventDetail(nextEventId)
+          if (active) setSelectedEventDetail(detail)
+        } else {
+          setSelectedEventDetail(null)
+        }
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setError(err instanceof Error ? err.message : 'Failed to load events')
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingEvents(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [selectedEndpoint?.id])
+
+  // 3-second polling only when endpoint is active and browser tab is visible
+  useEffect(() => {
+    if (!selectedEndpoint?.id || !isTabVisible) return
+    const endpointId = selectedEndpoint.id
+    const timer = window.setInterval(() => {
+      void fetchEndpointData(endpointId, selectedEventId)
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [selectedEndpoint?.id, selectedEventId, isTabVisible, fetchEndpointData])
+
+  const handleSelectEvent = async (eventId: string) => {
+    setSelectedEventId(eventId)
+    setLoadingDetail(true)
+    try {
+      const detail = await apiClient.getEventDetail(eventId)
+      setSelectedEventDetail(detail)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load event details')
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
+
+  const handleReplay = async (eventId: string) => {
+    setReplaying(true)
+    try {
+      const updated = await apiClient.replayEvent(eventId)
+      setSelectedEventDetail(updated)
+      setStatusMessage('Event re-queued for delivery.')
+      if (selectedEndpoint) {
+        await fetchEndpointData(selectedEndpoint.id, eventId)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Replay failed')
+    } finally {
+      setReplaying(false)
+    }
+  }
 
   const handleCreateEndpoint = async (data: EndpointCreate) => {
     const created = await apiClient.createEndpoint(data)
     setEndpoints((prev) => [created, ...prev])
     setSelectedEndpointId(created.id)
     setShowSecret(false)
+    setStatusMessage(`Endpoint ${created.name} created.`)
   }
 
   const handleDeleteEndpoint = async (endpoint: Endpoint) => {
@@ -50,17 +193,19 @@ export function App() {
       }
       return remaining
     })
+    setStatusMessage(`Deleted endpoint ${endpoint.name}.`)
   }
 
   const copyToClipboard = async (value: string, field: 'url' | 'secret') => {
     try {
       await navigator.clipboard.writeText(value)
       setCopiedField(field)
+      setStatusMessage(field === 'url' ? 'Copied ingestion URL.' : 'Copied signing secret.')
       window.setTimeout(() => {
         setCopiedField((curr) => (curr === field ? null : curr))
       }, 1500)
     } catch {
-      // Ignore clipboard failures in restricted contexts
+      // Ignore clipboard failures
     }
   }
 
@@ -68,6 +213,10 @@ export function App() {
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#09090B] text-[#FAFAFA] flex">
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {statusMessage}
+      </div>
+
       <Sidebar
         endpoints={endpoints}
         selectedId={selectedEndpoint?.id ?? null}
@@ -84,9 +233,16 @@ export function App() {
         {error && (
           <div
             role="alert"
-            className="px-4 py-2 bg-rose-950/60 border-b border-rose-800/60 text-xs text-rose-300 font-mono"
+            className="px-4 py-2 bg-rose-950/60 border-b border-rose-800/60 text-xs text-rose-300 font-mono flex items-center justify-between gap-3"
           >
-            {error}
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-rose-200 hover:text-white underline cursor-pointer"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 
@@ -158,8 +314,21 @@ export function App() {
               </div>
             </header>
 
-            <div className="flex-1 flex items-center justify-center text-xs font-mono text-zinc-500">
-              Event feed &amp; inspector loading next...
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2">
+              <EventFeed
+                events={events}
+                selectedEventId={selectedEventId}
+                loading={loadingEvents}
+                isPolling={isTabVisible}
+                onSelectEvent={(id) => void handleSelectEvent(id)}
+                onRefresh={() => void fetchEndpointData(selectedEndpoint.id, selectedEventId)}
+              />
+              <EventInspector
+                event={selectedEventDetail}
+                loading={loadingDetail}
+                replaying={replaying}
+                onReplay={handleReplay}
+              />
             </div>
           </>
         ) : (
